@@ -1,0 +1,6 @@
+screenshots/*
+outputs/*
+scripts/__pycache__
+target.jpg
+IMAGES_INFO.json
+mosaic_output.png
