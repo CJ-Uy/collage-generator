@@ -1,16 +1,17 @@
 import os
 import json
+import random
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
 from datetime import datetime
+from scipy.spatial import cKDTree
 
 
 def load_images_info(json_file="IMAGES_INFO.json"):
 	"""Load preprocessed image information from JSON file."""
 	with open(json_file, "r") as f:
 		return json.load(f)
-
 
 def calculate_optimal_cell_size(images_info, percentile=10):
 	"""
@@ -45,7 +46,6 @@ def calculate_optimal_cell_size(images_info, percentile=10):
 	cell_size = max(20, int(percentile_value * 0.4))
 
 	return cell_size
-
 
 def filter_images_by_date(images_info, start_date=None, end_date=None):
 	"""
@@ -93,7 +93,6 @@ def filter_images_by_date(images_info, start_date=None, end_date=None):
 
 	return filtered
 
-
 def analyze_target_image(target_path, cell_size=50):
 	"""
 	Analyze target image and extract average RGB for each grid cell.
@@ -134,143 +133,143 @@ def analyze_target_image(target_path, cell_size=50):
 		"cell_size": cell_size,
 	}
 
+def find_best_match(target_color, tree, image_filenames, used_images, k=10):
+    """
+    Find the best matching unused image for a target color using a k-d tree.
 
-def color_distance(c1, c2):
-	"""Calculate Euclidean distance between two RGB colors."""
-	return np.sqrt(sum((a - b) ** 2 for a, b in zip(c1, c2)))
+    Args:
+        target_color: RGB tuple
+        tree: cKDTree of image colors
+        image_filenames: List of filenames corresponding to the tree data
+        used_images: Set of already used image filenames
+        k: Number of nearest neighbors to check
 
+    Returns:
+        Filename of best matching unused image, or None
+    """
+    # Query the tree for the k nearest neighbors
+    distances, indices = tree.query(target_color, k=k)
 
-def find_best_match(target_color, images_info, used_images):
-	"""
-	Find the best matching image for a target color.
+    # Find the first unused image among the neighbors
+    for index in indices:
+        filename = image_filenames[index]
+        if filename not in used_images:
+            return filename
 
-	Args:
-	    target_color: RGB tuple
-	    images_info: Dict of image info from JSON
-	    used_images: Set of already used image filenames
+    return None
 
-	Returns:
-	    Filename of best matching unused image, or None
-	"""
-	best_match = None
-	best_distance = float("inf")
+def get_spiral_order_cells(grid_rows, grid_cols):
+    """
+    Generate grid cell coordinates in spiral order from center outward.
 
-	for filename, info in images_info.items():
-		if filename in used_images:
-			continue
+    Args:
+        grid_rows: Number of rows in grid
+        grid_cols: Number of columns in grid
 
-		img_color = info["average_rgb"]
-		distance = color_distance(target_color, img_color)
+    Yields:
+        (row, col) tuples in spiral order
+    """
+    visited = set()
+    center_row, center_col = grid_rows // 2, grid_cols // 2
 
-		if distance < best_distance:
-			best_distance = distance
-			best_match = filename
+    # Start from center
+    if 0 <= center_row < grid_rows and 0 <= center_col < grid_cols:
+        yield (center_row, center_col)
+        visited.add((center_row, center_col))
 
-	return best_match
+    # Spiral outward
+    row, col = center_row, center_col
+    dx, dy = 0, -1  # Start by moving up
+    steps = 1
+    turn_count = 0
 
+    while len(visited) < grid_rows * grid_cols:
+        for _ in range(steps):
+            row, col = row + dy, col + dx  # Note: row uses dy, col uses dx
+            if 0 <= row < grid_rows and 0 <= col < grid_cols and (row, col) not in visited:
+                yield (row, col)
+                visited.add((row, col))
 
-def get_candidate_positions(placed_rects, canvas_width, canvas_height, margin=2, max_candidates=200):
-	"""
-	Generate candidate positions for next image placement based on edges of placed images.
+        # Turn 90 degrees
+        dx, dy = -dy, dx
+        turn_count += 1
 
-	Args:
-	    placed_rects: List of (x, y, width, height, filename) tuples for placed images
-	    canvas_width: Width of canvas
-	    canvas_height: Height of canvas
-	    margin: Minimum spacing between images (default 5px)
-	    max_candidates: Maximum candidates to return (limits computation)
+        if turn_count % 2 == 0:
+            steps += 1
 
-	Returns:
-	    List of (x, y, distance_from_center) tuples sorted by distance from center
-	"""
-	if not placed_rects:
-		# First image: place at center
-		center_x = canvas_width // 2
-		center_y = canvas_height // 2
-		return [(center_x, center_y, 0)]
+        # Safety check to prevent infinite loop
+        if turn_count > grid_rows * grid_cols * 4:
+            break
 
-	candidates = []
-	center_x = canvas_width // 2
-	center_y = canvas_height // 2
+def find_placement_position_fast(img_width, img_height, occupancy_grid, grid_size, canvas_width, canvas_height):
+    """
+    Find a valid position to place an image using a fast occupancy grid with randomized offsets.
 
-	# Use all placed images for candidate generation
-	# Generate positions around edges of ALL placed images
-	for x, y, w, h, _ in placed_rects:
-		# Only add 2 positions per edge (reduce from 3)
-		# Right edge
-		candidates.append((x + w + margin, y + h // 2))
+    Args:
+        img_width: Width of image to place
+        img_height: Height of image to place
+        occupancy_grid: 2D numpy array marking occupied cells
+        grid_size: Size of each grid cell in pixels
+        canvas_width: Canvas width
+        canvas_height: Canvas height
 
-		# Left edge
-		candidates.append((x - margin, y + h // 2))
+    Returns:
+        (x, y) tuple for top-left position, or None if no valid position found
+    """
+    grid_rows, grid_cols = occupancy_grid.shape
 
-		# Bottom edge
-		candidates.append((x + w // 2, y + h + margin))
+    # Try positions in sequential order (left-to-right, top-to-bottom) for tight packing
+    for row in range(grid_rows):
+        for col in range(grid_cols):
+            # Check if this grid cell and surrounding cells are free
+            cells_needed_h = (img_height + grid_size - 1) // grid_size
+            cells_needed_w = (img_width + grid_size - 1) // grid_size
 
-		# Top edge
-		candidates.append((x + w // 2, y - margin))
+            # Check if we have enough free cells
+            if row + cells_needed_h > grid_rows or col + cells_needed_w > grid_cols:
+                continue
 
-	# Calculate distance from center
-	candidates_with_dist = []
-	for x, y in candidates:
-		dist = (x - center_x)**2 + (y - center_y)**2  # Use squared distance (faster)
-		candidates_with_dist.append((x, y, dist))
+            # Check if all needed cells are free
+            region = occupancy_grid[row:row+cells_needed_h, col:col+cells_needed_w]
+            if np.any(region):
+                continue
 
-	# Sort and return only top candidates
-	candidates_with_dist.sort(key=lambda item: item[2])
+            # Calculate pixel position - align to grid for tight packing (no random offset)
+            px = col * grid_size
+            py = row * grid_size
 
-	return candidates_with_dist[:max_candidates]
+            # Ensure we stay in bounds
+            px = max(0, min(px, canvas_width - img_width))
+            py = max(0, min(py, canvas_height - img_height))
 
+            # Check canvas bounds
+            if px + img_width > canvas_width or py + img_height > canvas_height or px < 0 or py < 0:
+                continue
 
-def check_overlap_fast(x1, y1, w1, h1, x2, y2, w2, h2):
-	"""Fast overlap check for two rectangles."""
-	return not (x1 + w1 <= x2 or x2 + w2 <= x1 or y1 + h1 <= y2 or y2 + h2 <= y1)
+            return (px, py)
 
+    return None
 
-def find_placement_position(img_width, img_height, placed_rects, canvas_width, canvas_height):
-	"""
-	Find a valid position to place an image without overlaps.
+def mark_occupied(occupancy_grid, x, y, width, height, grid_size):
+    """
+    Mark grid cells as occupied by an image.
 
-	Args:
-	    img_width: Width of image to place
-	    img_height: Height of image to place
-	    placed_rects: List of (x, y, w, h, filename) tuples
-	    canvas_width: Canvas width
-	    canvas_height: Canvas height
+    Args:
+        occupancy_grid: 2D numpy array
+        x, y: Top-left position of image
+        width, height: Image dimensions
+        grid_size: Size of each grid cell
+    """
+    grid_rows, grid_cols = occupancy_grid.shape
 
-	Returns:
-	    (x, y) tuple for top-left position, or None if no valid position found
-	"""
-	candidates = get_candidate_positions(placed_rects, canvas_width, canvas_height)
+    # Calculate which cells are covered - exact footprint only
+    start_col = x // grid_size
+    start_row = y // grid_size
+    end_col = min((x + width + grid_size - 1) // grid_size, grid_cols)
+    end_row = min((y + height + grid_size - 1) // grid_size, grid_rows)
 
-	# Try multiple alignment strategies for each candidate position
-	for x, y, _ in candidates:
-		# Try different ways to align the image at this position
-		alignment_strategies = [
-			(x, y),  # Top-left corner at position
-			(x - img_width, y),  # Top-right corner at position (place to left)
-			(x, y - img_height),  # Bottom-left corner at position (place above)
-			(x - img_width, y - img_height),  # Bottom-right corner at position
-			(x - img_width // 2, y - img_height // 2),  # Center at position
-		]
-
-		for px, py in alignment_strategies:
-			# Check bounds
-			if px < 0 or py < 0 or px + img_width > canvas_width or py + img_height > canvas_height:
-				continue
-
-			# Check overlap with ALL placed images
-			overlap = False
-
-			for placed_x, placed_y, placed_w, placed_h, _ in placed_rects:
-				if check_overlap_fast(px, py, img_width, img_height, placed_x, placed_y, placed_w, placed_h):
-					overlap = True
-					break
-
-			if not overlap:
-				return (px, py)
-
-	return None
-
+    # Mark cells as occupied
+    occupancy_grid[start_row:end_row, start_col:end_col] = 1
 
 def check_overlap(new_rect, placed_rects):
 	"""
@@ -292,7 +291,6 @@ def check_overlap(new_rect, placed_rects):
 
 	return False
 
-
 def assemble_mosaic(
 	TARGET_FILENAME,
 	IMAGE_FOLDER="screenshots",
@@ -303,6 +301,9 @@ def assemble_mosaic(
 	use_all_images=True,
 	scale_factor=None,
 	max_canvas_size=20000,
+	allow_overlaps=False,
+	tight_packing=True,
+	allow_duplicates=False,
 ):
 	"""
 	Assemble a mosaic from differently-sized images to recreate a target image.
@@ -317,10 +318,16 @@ def assemble_mosaic(
 	    use_all_images: If True, sizes the canvas to fit all images (default True)
 	    scale_factor: Scale down images by this factor. If None, auto-calculates to keep within max_canvas_size
 	    max_canvas_size: Maximum dimension (width or height) for output canvas in pixels (default 20000 = ~400MB PNG)
+	    allow_overlaps: If True, allows images to overlap slightly for better packing (default False)
+	    tight_packing: If True, uses sequential placement for tighter packing with less empty space (default True)
+	    allow_duplicates: If True, allows reusing images to fill all grid cells. All unique images will still be shown at least once (default False)
 	"""
 	print("\n=== MOSAIC ASSEMBLY ===")
 	print(f"Target image: {TARGET_FILENAME}")
-	print(f"Max canvas size: {max_canvas_size:,} px per dimension")
+	if max_canvas_size:
+		print(f"Max canvas size: {max_canvas_size:,} px per dimension")
+	else:
+		print("Max canvas size: Unlimited (auto-size to fit all images)")
 
 	# Load preprocessed image data
 	print("\nLoading image information...")
@@ -338,6 +345,14 @@ def assemble_mosaic(
 		print(f"  Filtered to {len(images_info)} images within date range")
 
 	num_images = len(images_info)
+	if num_images == 0:
+		print("No images to process. Exiting.")
+		return
+
+	# Prepare data for k-d tree
+	image_filenames = list(images_info.keys())
+	image_colors = [images_info[fn]["average_rgb"] for fn in image_filenames]
+	tree = cKDTree(image_colors)
 
 	# Analyze target image to get aspect ratio
 	target_img = Image.open(TARGET_FILENAME)
@@ -354,8 +369,11 @@ def assemble_mosaic(
 		# If scale_factor not provided, calculate it based on max_canvas_size
 		if scale_factor is None:
 			# Start with unscaled calculation
-			# Add 200% buffer for imperfect packing efficiency to ensure ALL images fit
-			ideal_area = int(total_area * 3.0)
+			# With sequential tight packing, we can use a much smaller buffer
+			if tight_packing:
+				ideal_area = int(total_area * 1.5)  # 50% buffer for tight sequential packing
+			else:
+				ideal_area = int(total_area * 3.0)  # 200% buffer for randomized placement
 
 			# Calculate ideal canvas dimensions
 			ideal_height = int(np.sqrt(ideal_area / aspect_ratio))
@@ -379,7 +397,10 @@ def assemble_mosaic(
 
 		# Apply scaling to total area
 		scaled_total_area = int(total_area * (scale_factor**2))
-		target_area = int(scaled_total_area * 3.0)
+		if tight_packing:
+			target_area = int(scaled_total_area * 1.5)  # 50% buffer for tight sequential packing
+		else:
+			target_area = int(scaled_total_area * 3.0)  # 200% buffer for randomized placement
 		print(f"  Scaled image area: {scaled_total_area:,} px²")
 		print(f"  Target canvas area (with packing buffer): {target_area:,} px²")
 
@@ -388,7 +409,7 @@ def assemble_mosaic(
 		canvas_width = int(canvas_height * aspect_ratio)
 
 		# Ensure we don't exceed max_canvas_size (safety check)
-		if max(canvas_width, canvas_height) > max_canvas_size:
+		if max_canvas_size and max(canvas_width, canvas_height) > max_canvas_size:
 			adjustment = max_canvas_size / max(canvas_width, canvas_height)
 			canvas_width = int(canvas_width * adjustment)
 			canvas_height = int(canvas_height * adjustment)
@@ -412,11 +433,13 @@ def assemble_mosaic(
 	# Calculate optimal cell size if not provided
 	if cell_size is None:
 		if use_all_images:
-			# Create MORE cells than images to give flexibility in placement
-			# Aim for 2x the number of images to ensure we can place everything
-			total_cells_needed = int(num_images * 2.0)
+			# Create cells based on actual image count with extra space for placement flexibility
+			if tight_packing:
+				total_cells_needed = int(num_images * 1.2)  # Only 20% extra for tight packing
+			else:
+				total_cells_needed = int(num_images * 2.5)  # 150% extra cells for placement flexibility
 			cell_area = (canvas_width * canvas_height) / total_cells_needed
-			cell_size = max(20, int(np.sqrt(cell_area)))
+			cell_size = max(10, int(np.sqrt(cell_area)))
 			print(f"\nCalculated cell size to accommodate all images: {cell_size}px")
 			print(
 				f"  This will create ~{total_cells_needed} cells for {num_images} images"
@@ -430,8 +453,7 @@ def assemble_mosaic(
 	# Analyze target image with calculated cell size
 	print("\nAnalyzing target image grid...")
 	target_data = analyze_target_image(TARGET_FILENAME, cell_size)
-	grid = target_data["grid"]
-
+	
 	# Scale grid to canvas size
 	grid_rows = canvas_height // cell_size
 	grid_cols = canvas_width // cell_size
@@ -463,56 +485,65 @@ def assemble_mosaic(
 	# Create output canvas
 	canvas = Image.new("RGBA", (canvas_width, canvas_height), (0, 0, 0, 0))
 
-	# Track used images and placed rectangles (x, y, width, height, filename)
+	# Create occupancy grid for fast collision detection
+	# Use smaller cells for more precise packing
+	if tight_packing:
+		occupancy_cell_size = max(5, cell_size // 12)  # Extra small cells for very tight packing
+	else:
+		occupancy_cell_size = max(15, cell_size // 8)  # Standard small cells
+	occupancy_rows = (canvas_height + occupancy_cell_size - 1) // occupancy_cell_size
+	occupancy_cols = (canvas_width + occupancy_cell_size - 1) // occupancy_cell_size
+	occupancy_grid = np.zeros((occupancy_rows, occupancy_cols), dtype=np.uint8)
+
+	print(f"Occupancy grid: {occupancy_rows}x{occupancy_cols} cells of {occupancy_cell_size}px")
+
+	# Track placed images
+	placed_images = []
+
+	# Sort images by area (largest first) for better bin packing
+	print("\nSorting images by size (largest first)...")
+	images_by_size = sorted(
+		images_info.items(),
+		key=lambda x: x[1]["area"],
+		reverse=True
+	)
+
+	# PHASE 1: Color-matched placement in spiral order from center
+	print("\nPhase 1: Placing images with color matching...")
 	used_images = set()
-	placed_rects = []
+	placed_at_least_once = set()  # Track which images have been placed at least once
 
-	# Place images using organic packing from center outward
-	print("\nPlacing images organically from center outward...")
+	# Get spiral order of grid cells (center outward)
+	spiral_cells = list(get_spiral_order_cells(grid_rows, grid_cols))
 
-	# Create a grid-based sampling of the target for color matching
-	# We'll sample colors from the grid to match images to regions
-	color_samples = []
-	for row in range(grid_rows):
-		for col in range(grid_cols):
-			if (row, col) in grid:
-				x = col * cell_size + cell_size // 2
-				y = row * cell_size + cell_size // 2
-				color = grid[(row, col)]
-				# Calculate distance from center for priority
-				dist = np.sqrt((x - canvas_width//2)**2 + (y - canvas_height//2)**2)
-				color_samples.append((x, y, color, dist))
-
-	# Sort by distance from center (process center first)
-	color_samples.sort(key=lambda item: item[3])
-
-	# Place images
-	failed_placements = 0
-	placement_attempts = 0
-
-	for img_idx in tqdm(range(num_images), desc="Assembling"):
-		placement_attempts += 1
-		if len(used_images) >= num_images:
+	# Try to match each grid cell with best-matching image
+	for row, col in tqdm(spiral_cells, desc="Color matching"):
+		# Stop only if duplicates are disabled and we've used all images
+		if not allow_duplicates and len(used_images) >= num_images:
 			break
 
-		# Find target color from nearest unprocessed sample
-		target_color = None
-		if img_idx < len(color_samples):
-			_, _, target_color, _ = color_samples[img_idx]
-		else:
-			# Use center color as fallback
-			center_row, center_col = grid_rows // 2, grid_cols // 2
-			target_color = grid.get((center_row, center_col), (128, 128, 128))
-
-		# Find best matching unused image (limit search for speed)
-		best_match = find_best_match(target_color, images_info, used_images)
-
-		if best_match is None:
-			# No more unused images available
-			failed_placements += 1
+		# Get target color for this cell
+		target_color = grid.get((row, col))
+		if target_color is None:
 			continue
 
-		# Load the matched image
+		# Find best matching image
+		if allow_duplicates:
+			# When duplicates allowed, prefer unused images first, then allow reuse
+			if len(placed_at_least_once) < num_images:
+				# Still have images that haven't been placed once
+				best_match = find_best_match(target_color, tree, image_filenames, placed_at_least_once, k=50)
+			else:
+				# All images placed at least once, now allow any best match
+				best_match = find_best_match(target_color, tree, image_filenames, set(), k=50)
+		else:
+			# No duplicates - only use each image once
+			best_match = find_best_match(target_color, tree, image_filenames, used_images, k=50)
+
+		if best_match is None:
+			continue
+
+		# Load and scale the image
 		img_path = os.path.join(IMAGE_FOLDER, best_match)
 		try:
 			img = Image.open(img_path)
@@ -524,48 +555,250 @@ def assemble_mosaic(
 				new_height = max(1, int(original_height * scale_factor))
 				img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 		except Exception as e:
-			print(f"\n[ERROR] Could not load {best_match}: {e}")
-			failed_placements += 1
 			continue
 
-		# Find placement position using organic packing
 		img_width, img_height = img.size
-		position = find_placement_position(img_width, img_height, placed_rects, canvas_width, canvas_height)
 
-		if position is None:
-			# Could not find valid position - skip this image
-			failed_placements += 1
+		# Try to place near the target cell
+		target_x = col * cell_size
+		target_y = row * cell_size
+
+		# Search in expanding radius around target position
+		found_position = None
+		for search_radius in range(0, max(grid_rows, grid_cols)):
+			# Try positions in a square around target
+			for dy in range(-search_radius, search_radius + 1):
+				for dx in range(-search_radius, search_radius + 1):
+					# Only check perimeter of square
+					if search_radius > 0 and abs(dx) != search_radius and abs(dy) != search_radius:
+						continue
+
+					check_x = max(0, min(target_x + dx * cell_size, canvas_width - img_width))
+					check_y = max(0, min(target_y + dy * cell_size, canvas_height - img_height))
+
+					# Check if position is valid in occupancy grid
+					start_col_occ = check_x // occupancy_cell_size
+					start_row_occ = check_y // occupancy_cell_size
+					cells_needed_h = (img_height + occupancy_cell_size - 1) // occupancy_cell_size
+					cells_needed_w = (img_width + occupancy_cell_size - 1) // occupancy_cell_size
+
+					if start_row_occ + cells_needed_h > occupancy_rows or start_col_occ + cells_needed_w > occupancy_cols:
+						continue
+
+					region = occupancy_grid[start_row_occ:start_row_occ+cells_needed_h, start_col_occ:start_col_occ+cells_needed_w]
+					if not np.any(region):
+						found_position = (check_x, check_y)
+						break
+				if found_position:
+					break
+			if found_position:
+				break
+
+		if found_position is None:
 			continue
 
-		paste_x, paste_y = position
+		paste_x, paste_y = found_position
 
-		# Paste the image onto canvas (handle transparency if present)
+		# Paste the image onto canvas
 		if img.mode == "RGBA":
 			canvas.paste(img, (paste_x, paste_y), img)
 		else:
-			# Convert to RGBA to maintain consistency
 			img_rgba = img.convert("RGBA")
 			canvas.paste(img_rgba, (paste_x, paste_y), img_rgba)
 
-		# Mark image as used and record placement
-		used_images.add(best_match)
-		placed_rects.append((paste_x, paste_y, img_width, img_height, best_match))
-		failed_placements = 0  # Reset failure counter on success
+		# Mark cells as occupied
+		mark_occupied(occupancy_grid, paste_x, paste_y, img_width, img_height, occupancy_cell_size)
 
-	print(f"\nPlacement attempts: {placement_attempts}")
-	print(f"Successfully placed: {len(used_images)} images")
-	print(f"Failed placements: {failed_placements}")
-	print(f"Used {len(used_images)} unique images out of {num_images} available")
+		# Track as used
+		if not allow_duplicates:
+			used_images.add(best_match)
+		placed_at_least_once.add(best_match)
+		placed_images.append(best_match)
 
-	usage_percentage = (len(used_images) / num_images * 100) if num_images > 0 else 0
-	print(f"Image usage: {usage_percentage:.1f}%")
+	print(f"Phase 1 complete: {len(placed_images)} images placed")
+	print(f"  Unique images used: {len(placed_at_least_once)}")
 
-	if len(used_images) < num_images:
-		unused_count = num_images - len(used_images)
-		print(f"\nNote: {unused_count} images were not placed due to space constraints")
-		print("To use more images, try:")
-		print("  - Increasing max_canvas_size")
-		print("  - Decreasing scale_factor")
+	# PHASE 2: Place remaining images anywhere they fit (only if duplicates disabled)
+	if not allow_duplicates:
+		print("\nPhase 2: Placing remaining images in available space...")
+		remaining_images = [fn for fn in image_filenames if fn not in placed_at_least_once]
+
+		# Sort remaining by size (largest first for better packing)
+		remaining_sorted = sorted(
+			remaining_images,
+			key=lambda fn: images_info[fn]["area"],
+			reverse=True
+		)
+
+		for filename in tqdm(remaining_sorted, desc="Filling gaps"):
+			# Load and scale the image
+			img_path = os.path.join(IMAGE_FOLDER, filename)
+			try:
+				img = Image.open(img_path)
+
+				if scale_factor < 1.0:
+					original_width, original_height = img.size
+					new_width = max(1, int(original_width * scale_factor))
+					new_height = max(1, int(original_height * scale_factor))
+					img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+			except Exception as e:
+				continue
+
+			img_width, img_height = img.size
+
+			# Find any available position
+			position = find_placement_position_fast(
+				img_width, img_height, occupancy_grid, occupancy_cell_size,
+				canvas_width, canvas_height
+			)
+
+			if position is None:
+				# No space found - image will go to phase 3
+				continue
+
+			paste_x, paste_y = position
+
+			# Paste the image
+			if img.mode == "RGBA":
+				canvas.paste(img, (paste_x, paste_y), img)
+			else:
+				img_rgba = img.convert("RGBA")
+				canvas.paste(img_rgba, (paste_x, paste_y), img_rgba)
+
+			# Mark occupied
+			mark_occupied(occupancy_grid, paste_x, paste_y, img_width, img_height, occupancy_cell_size)
+
+			placed_at_least_once.add(filename)
+			placed_images.append(filename)
+
+		print(f"Phase 2 complete: {len(placed_images)} total images placed")
+		print(f"  Unique images used: {len(placed_at_least_once)}")
+	else:
+		print("\nPhase 2: Skipped (allow_duplicates=True, all cells filled in Phase 1)")
+
+	# PHASE 3: Place any remaining images by expanding canvas (only if duplicates disabled)
+	still_remaining = [fn for fn in image_filenames if fn not in placed_at_least_once]
+
+	if still_remaining and not allow_duplicates:
+		print(f"\nPhase 3: Expanding canvas for {len(still_remaining)} remaining images...")
+
+		# Calculate area needed for remaining images
+		remaining_area = sum(images_info[fn]["area"] * (scale_factor ** 2) for fn in still_remaining)
+
+		# Expand canvas in a balanced way (expand both width and height proportionally)
+		# This keeps images closer to the main image instead of far to the right
+		expansion_area = remaining_area * 1.3  # 30% buffer
+
+		# Calculate expansion maintaining aspect ratio
+		expansion_height = int(np.sqrt(expansion_area / aspect_ratio))
+		expansion_width = int(expansion_height * aspect_ratio)
+
+		# Distribute expansion: 70% to width, 30% to height for a more compact look
+		expansion_width = int(expansion_width * 0.5)  # Reduce horizontal expansion
+		expansion_height = int(expansion_height * 0.5)  # Reduce vertical expansion
+
+		new_canvas_width = canvas_width + expansion_width
+		new_canvas_height = canvas_height + expansion_height
+
+		# Create new larger canvas
+		new_canvas = Image.new("RGBA", (new_canvas_width, new_canvas_height), (0, 0, 0, 0))
+		new_canvas.paste(canvas, (0, 0))
+		canvas = new_canvas
+
+		# Expand occupancy grid in both dimensions
+		new_occupancy_cols = (new_canvas_width + occupancy_cell_size - 1) // occupancy_cell_size
+		new_occupancy_rows = (new_canvas_height + occupancy_cell_size - 1) // occupancy_cell_size
+		new_occupancy_grid = np.zeros((new_occupancy_rows, new_occupancy_cols), dtype=np.uint8)
+		new_occupancy_grid[:occupancy_rows, :occupancy_cols] = occupancy_grid
+		occupancy_grid = new_occupancy_grid
+		occupancy_cols = new_occupancy_cols
+		occupancy_rows = new_occupancy_rows
+		canvas_width = new_canvas_width
+		canvas_height = new_canvas_height
+
+		print(f"Canvas expanded to: {canvas_width}x{canvas_height}")
+		print(f"  Added {expansion_width}px width and {expansion_height}px height")
+
+		# Now place remaining images in the new space
+		for filename in tqdm(still_remaining, desc="Placing in expanded area"):
+			img_path = os.path.join(IMAGE_FOLDER, filename)
+			try:
+				img = Image.open(img_path)
+
+				if scale_factor < 1.0:
+					original_width, original_height = img.size
+					new_width = max(1, int(original_width * scale_factor))
+					new_height = max(1, int(original_height * scale_factor))
+					img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+			except Exception as e:
+				continue
+
+			img_width, img_height = img.size
+
+			# Find position in expanded area
+			position = find_placement_position_fast(
+				img_width, img_height, occupancy_grid, occupancy_cell_size,
+				canvas_width, canvas_height
+			)
+
+			if position is None:
+				# Still no space? Try reducing image size
+				attempt_scale = 0.8
+				while attempt_scale > 0.2 and position is None:
+					scaled_width = max(1, int(img_width * attempt_scale))
+					scaled_height = max(1, int(img_height * attempt_scale))
+					temp_img = img.resize((scaled_width, scaled_height), Image.Resampling.LANCZOS)
+
+					position = find_placement_position_fast(
+						scaled_width, scaled_height, occupancy_grid, occupancy_cell_size,
+						canvas_width, canvas_height
+					)
+
+					if position:
+						img = temp_img
+						img_width, img_height = scaled_width, scaled_height
+						break
+
+					attempt_scale -= 0.1
+
+				if position is None:
+					print(f"\nWarning: Could not place {filename} even after scaling")
+					continue
+
+			paste_x, paste_y = position
+
+			# Paste the image
+			if img.mode == "RGBA":
+				canvas.paste(img, (paste_x, paste_y), img)
+			else:
+				img_rgba = img.convert("RGBA")
+				canvas.paste(img_rgba, (paste_x, paste_y), img_rgba)
+
+			# Mark occupied
+			mark_occupied(occupancy_grid, paste_x, paste_y, img_width, img_height, occupancy_cell_size)
+
+			placed_at_least_once.add(filename)
+			placed_images.append(filename)
+
+		print(f"Phase 3 complete: {len(placed_images)} total images placed")
+		print(f"  Unique images used: {len(placed_at_least_once)}")
+
+	print(f"\n=== FINAL SUMMARY ===")
+	print(f"Total images placed: {len(placed_images)}")
+	print(f"Unique images used: {len(placed_at_least_once)} out of {num_images} available")
+
+	if allow_duplicates:
+		print(f"Duplicates allowed: Yes (images reused to fill grid)")
+		duplicate_count = len(placed_images) - len(placed_at_least_once)
+		print(f"  Images reused: {duplicate_count} times")
+
+	unique_usage_percentage = (len(placed_at_least_once) / num_images * 100) if num_images > 0 else 0
+	print(f"Unique image usage: {unique_usage_percentage:.1f}%")
+
+	if len(placed_at_least_once) < num_images:
+		unused_count = num_images - len(placed_at_least_once)
+		print(f"\nWarning: {unused_count} unique images could not be placed")
+		print("This usually indicates corrupted image files or extreme size constraints")
 
 	# Crop canvas to actual content (optional - remove whitespace)
 	# For now, we'll keep the full canvas to show all placed images
@@ -573,6 +806,6 @@ def assemble_mosaic(
 	# Save the result
 	print(f"\nSaving mosaic to {output_file}...")
 	canvas.save(output_file)
-	print("✓ Mosaic saved successfully!")
+	print("[OK] Mosaic saved successfully!")
 
 	return canvas
