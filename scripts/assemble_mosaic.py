@@ -26,10 +26,11 @@ from scripts.placement import (
 from scripts.target_analyzer import analyze_target_image, calculate_optimal_cell_size
 
 
-def calculate_canvas_dimensions(images_info, aspect_ratio, scale_factor, tight_packing, max_canvas_size):
+def calculate_canvas_dimensions(images_info, aspect_ratio, scale_factor, tight_packing, max_canvas_size, verbose=True):
 	"""Calculate optimal canvas dimensions to fit all images."""
 	total_area = sum(info["area"] for info in images_info.values())
-	print(f"  Total image area: {total_area:,} px²")
+	if verbose:
+		print(f"  Total image area: {total_area:,} px²")
 
 	# Apply scaling to total area
 	scaled_total_area = int(total_area * (scale_factor**2))
@@ -40,8 +41,9 @@ def calculate_canvas_dimensions(images_info, aspect_ratio, scale_factor, tight_p
 	else:
 		target_area = int(scaled_total_area * 3.0)  # 200% buffer for random packing
 
-	print(f"  Scaled image area: {scaled_total_area:,} px²")
-	print(f"  Target canvas area (with buffer): {target_area:,} px²")
+	if verbose:
+		print(f"  Scaled image area: {scaled_total_area:,} px²")
+		print(f"  Target canvas area (with buffer): {target_area:,} px²")
 
 	# Calculate dimensions maintaining aspect ratio
 	canvas_height = int(np.sqrt(target_area / aspect_ratio))
@@ -52,7 +54,8 @@ def calculate_canvas_dimensions(images_info, aspect_ratio, scale_factor, tight_p
 		adjustment = max_canvas_size / max(canvas_width, canvas_height)
 		canvas_width = int(canvas_width * adjustment)
 		canvas_height = int(canvas_height * adjustment)
-		print("  Applied adjustment to meet size limit")
+		if verbose:
+			print("  Applied adjustment to meet size limit")
 
 	return canvas_width, canvas_height
 
@@ -72,7 +75,7 @@ def phase1_color_matched_placement(
 	spiral_cells, grid, tree, image_filenames, images_info,
 	IMAGE_FOLDER, scale_factor, cell_size, occupancy_grid,
 	occupancy_cell_size, canvas, canvas_width, canvas_height,
-	num_images, allow_duplicates
+	num_images, allow_duplicates, verbose=True, show_progress=True
 ):
 	"""
 	Phase 1: Place images with color matching in spiral order from center.
@@ -80,7 +83,8 @@ def phase1_color_matched_placement(
 	Returns:
 	    Tuple of (placed_at_least_once set, placed_images list)
 	"""
-	print("\nPhase 1: Placing images with color matching...")
+	if verbose:
+		print("\nPhase 1: Placing images with color matching...")
 	placed_at_least_once = set()
 	placed_images = []
 	used_images = set()
@@ -88,7 +92,7 @@ def phase1_color_matched_placement(
 	grid_rows = max(r for r, c in grid.keys()) + 1 if grid else 0
 	grid_cols = max(c for r, c in grid.keys()) + 1 if grid else 0
 
-	for row, col in tqdm(spiral_cells, desc="Color matching"):
+	for row, col in tqdm(spiral_cells, desc="Color matching", disable=not show_progress):
 		# Stop only if duplicates disabled and all images used
 		if not allow_duplicates and len(used_images) >= num_images:
 			break
@@ -144,8 +148,9 @@ def phase1_color_matched_placement(
 		placed_at_least_once.add(best_match)
 		placed_images.append(best_match)
 
-	print(f"Phase 1 complete: {len(placed_images)} images placed")
-	print(f"  Unique images used: {len(placed_at_least_once)}")
+	if verbose:
+		print(f"Phase 1 complete: {len(placed_images)} images placed")
+		print(f"  Unique images used: {len(placed_at_least_once)}")
 
 	return placed_at_least_once, placed_images
 
@@ -153,7 +158,7 @@ def phase1_color_matched_placement(
 def phase2_fill_remaining_gaps(
 	image_filenames, placed_at_least_once, images_info,
 	IMAGE_FOLDER, scale_factor, occupancy_grid, occupancy_cell_size,
-	canvas, canvas_width, canvas_height, placed_images
+	canvas, canvas_width, canvas_height, placed_images, verbose=True, show_progress=True
 ):
 	"""
 	Phase 2: Place remaining images in any available space.
@@ -164,10 +169,12 @@ def phase2_fill_remaining_gaps(
 	remaining_images = [fn for fn in image_filenames if fn not in placed_at_least_once]
 
 	if not remaining_images:
-		print("\nPhase 2: Skipped (all images already placed in Phase 1)")
+		if verbose:
+			print("\nPhase 2: Skipped (all images already placed in Phase 1)")
 		return placed_at_least_once
 
-	print(f"\nPhase 2: Placing {len(remaining_images)} remaining images in available space...")
+	if verbose:
+		print(f"\nPhase 2: Placing {len(remaining_images)} remaining images in available space...")
 
 	# Sort by size (largest first for better packing)
 	remaining_sorted = sorted(
@@ -176,7 +183,7 @@ def phase2_fill_remaining_gaps(
 		reverse=True
 	)
 
-	for filename in tqdm(remaining_sorted, desc="Filling gaps"):
+	for filename in tqdm(remaining_sorted, desc="Filling gaps", disable=not show_progress):
 		img_path = os.path.join(IMAGE_FOLDER, filename)
 		img = load_and_scale_image(img_path, scale_factor)
 		if img is None:
@@ -198,8 +205,9 @@ def phase2_fill_remaining_gaps(
 		placed_at_least_once.add(filename)
 		placed_images.append(filename)
 
-	print(f"Phase 2 complete: {len(placed_images)} total images placed")
-	print(f"  Unique images used: {len(placed_at_least_once)}")
+	if verbose:
+		print(f"Phase 2 complete: {len(placed_images)} total images placed")
+		print(f"  Unique images used: {len(placed_at_least_once)}")
 
 	return placed_at_least_once
 
@@ -208,7 +216,7 @@ def phase3_expand_and_place(
 	image_filenames, placed_at_least_once, images_info,
 	IMAGE_FOLDER, scale_factor, occupancy_grid, occupancy_cell_size,
 	canvas, canvas_width, canvas_height, placed_images,
-	aspect_ratio, occupancy_rows, occupancy_cols
+	aspect_ratio, occupancy_rows, occupancy_cols, verbose=True, show_progress=True
 ):
 	"""
 	Phase 3: Expand canvas and place any remaining images.
@@ -221,7 +229,8 @@ def phase3_expand_and_place(
 	if not still_remaining:
 		return canvas, occupancy_grid, canvas_width, canvas_height, occupancy_rows, occupancy_cols, placed_at_least_once
 
-	print(f"\nPhase 3: Expanding canvas for {len(still_remaining)} remaining images...")
+	if verbose:
+		print(f"\nPhase 3: Expanding canvas for {len(still_remaining)} remaining images...")
 
 	# Calculate expansion needed
 	remaining_area = sum(images_info[fn]["area"] * (scale_factor ** 2) for fn in still_remaining)
@@ -240,11 +249,12 @@ def phase3_expand_and_place(
 		canvas, occupancy_grid, occupancy_cell_size, expansion_width, expansion_height
 	)
 
-	print(f"Canvas expanded to: {canvas_width}x{canvas_height}")
-	print(f"  Added {expansion_width}px width and {expansion_height}px height")
+	if verbose:
+		print(f"Canvas expanded to: {canvas_width}x{canvas_height}")
+		print(f"  Added {expansion_width}px width and {expansion_height}px height")
 
 	# Place remaining images
-	for filename in tqdm(still_remaining, desc="Placing in expanded area"):
+	for filename in tqdm(still_remaining, desc="Placing in expanded area", disable=not show_progress):
 		img_path = os.path.join(IMAGE_FOLDER, filename)
 		img = load_and_scale_image(img_path, scale_factor)
 		if img is None:
@@ -278,7 +288,8 @@ def phase3_expand_and_place(
 				attempt_scale -= 0.1
 
 			if position is None:
-				print(f"\nWarning: Could not place {filename} even after scaling")
+				if verbose:
+					print(f"\nWarning: Could not place {filename} even after scaling")
 				continue
 
 		place_image_on_canvas(canvas, img, position)
@@ -287,8 +298,9 @@ def phase3_expand_and_place(
 		placed_at_least_once.add(filename)
 		placed_images.append(filename)
 
-	print(f"Phase 3 complete: {len(placed_images)} total images placed")
-	print(f"  Unique images used: {len(placed_at_least_once)}")
+	if verbose:
+		print(f"Phase 3 complete: {len(placed_images)} total images placed")
+		print(f"  Unique images used: {len(placed_at_least_once)}")
 
 	return canvas, occupancy_grid, canvas_width, canvas_height, occupancy_rows, occupancy_cols, placed_at_least_once
 
@@ -327,6 +339,8 @@ def assemble_mosaic(
 	tight_packing=True,
 	allow_duplicates=False,
 	overlay_opacity=0.0,
+	verbose=True,
+	show_progress=None,
 ):
 	"""
 	Assemble a mosaic from differently-sized images to recreate a target image.
@@ -345,31 +359,42 @@ def assemble_mosaic(
 	    tight_packing: Use sequential placement for tight packing (default True)
 	    allow_duplicates: Allow image reuse while ensuring all appear once (default False)
 	    overlay_opacity: Opacity of target image overlay (0.0-1.0, 0=none, 1=full). Default 0.0
+	    verbose: If True, print detailed text output. If False, minimal text (default True)
+	    show_progress: If True, show progress bars. If None, follows verbose setting (default None)
 
 	Returns:
 	    PIL Image object of the completed mosaic
 	"""
-	print("\n=== MOSAIC ASSEMBLY ===")
-	print(f"Target image: {TARGET_FILENAME}")
-	print(f"Max canvas size: {max_canvas_size:,} px per dimension" if max_canvas_size else "Max canvas size: Unlimited")
+	# If show_progress not specified, follow verbose setting
+	if show_progress is None:
+		show_progress = verbose
+	if verbose:
+		print("\n=== MOSAIC ASSEMBLY ===")
+		print(f"Target image: {TARGET_FILENAME}")
+		print(f"Max canvas size: {max_canvas_size:,} px per dimension" if max_canvas_size else "Max canvas size: Unlimited")
 
 	# Load and filter images
-	print("\nLoading image information...")
+	if verbose:
+		print("\nLoading image information...")
 	images_info = load_images_info()
-	print(f"Loaded info for {len(images_info)} images")
+	if verbose:
+		print(f"Loaded info for {len(images_info)} images")
 
 	if start_date or end_date:
-		print("\nApplying date filter...")
-		if start_date:
-			print(f"  Start date: {start_date}")
-		if end_date:
-			print(f"  End date: {end_date}")
+		if verbose:
+			print("\nApplying date filter...")
+			if start_date:
+				print(f"  Start date: {start_date}")
+			if end_date:
+				print(f"  End date: {end_date}")
 		images_info = filter_images_by_date(images_info, start_date, end_date)
-		print(f"  Filtered to {len(images_info)} images within date range")
+		if verbose:
+			print(f"  Filtered to {len(images_info)} images within date range")
 
 	num_images = len(images_info)
 	if num_images == 0:
-		print("No images to process. Exiting.")
+		if verbose:
+			print("No images to process. Exiting.")
 		return None
 
 	# Build color matching tree
@@ -380,11 +405,13 @@ def assemble_mosaic(
 	target_img = Image.open(TARGET_FILENAME)
 	target_width_orig, target_height_orig = target_img.size
 	aspect_ratio = target_width_orig / target_height_orig
-	print(f"\nTarget image aspect ratio: {aspect_ratio:.2f}")
+	if verbose:
+		print(f"\nTarget image aspect ratio: {aspect_ratio:.2f}")
 
 	# Calculate canvas dimensions
 	if use_all_images:
-		print("\nCalculating optimal canvas size...")
+		if verbose:
+			print("\nCalculating optimal canvas size...")
 
 		# Auto-calculate scale_factor if needed
 		if scale_factor is None:
@@ -400,18 +427,22 @@ def assemble_mosaic(
 
 			if max_dim > max_canvas_size:
 				scale_factor = max_canvas_size / max_dim
-				print(f"  Auto-scaling to fit within {max_canvas_size}px limit")
-				print(f"  Calculated scale factor: {scale_factor * 100:.1f}%")
+				if verbose:
+					print(f"  Auto-scaling to fit within {max_canvas_size}px limit")
+					print(f"  Calculated scale factor: {scale_factor * 100:.1f}%")
 			else:
 				scale_factor = 1.0
-				print("  Canvas fits within limit, no scaling needed")
+				if verbose:
+					print("  Canvas fits within limit, no scaling needed")
 		else:
-			print(f"  Using user-specified scale factor: {scale_factor * 100:.0f}%")
+			if verbose:
+				print(f"  Using user-specified scale factor: {scale_factor * 100:.0f}%")
 
 		canvas_width, canvas_height = calculate_canvas_dimensions(
-			images_info, aspect_ratio, scale_factor, tight_packing, max_canvas_size
+			images_info, aspect_ratio, scale_factor, tight_packing, max_canvas_size, verbose
 		)
-		print(f"Final canvas size: {canvas_width}x{canvas_height} ({canvas_width * canvas_height:,} px²)")
+		if verbose:
+			print(f"Final canvas size: {canvas_width}x{canvas_height} ({canvas_width * canvas_height:,} px²)")
 	else:
 		canvas_width = target_width_orig * 2
 		canvas_height = target_height_orig * 2
@@ -427,13 +458,16 @@ def assemble_mosaic(
 				total_cells_needed = int(num_images * 2.5)
 			cell_area = (canvas_width * canvas_height) / total_cells_needed
 			cell_size = max(10, int(np.sqrt(cell_area)))
-			print(f"\nCalculated cell size: {cell_size}px for {num_images} images")
+			if verbose:
+				print(f"\nCalculated cell size: {cell_size}px for {num_images} images")
 		else:
 			cell_size = calculate_optimal_cell_size(images_info)
-			print(f"\nCalculated cell size: {cell_size}px")
+			if verbose:
+				print(f"\nCalculated cell size: {cell_size}px")
 
 	# Analyze target image grid
-	print("\nAnalyzing target image grid...")
+	if verbose:
+		print("\nAnalyzing target image grid...")
 	grid_rows = canvas_height // cell_size
 	grid_cols = canvas_width // cell_size
 
@@ -441,7 +475,7 @@ def assemble_mosaic(
 	np_img = np.array(target_img_resized.convert("RGB"))
 
 	grid = {}
-	for row in tqdm(range(grid_rows), desc="Analyzing grid"):
+	for row in tqdm(range(grid_rows), desc="Analyzing grid", disable=not show_progress):
 		for col in range(grid_cols):
 			y_start = row * cell_size
 			y_end = min((row + 1) * cell_size, canvas_height)
@@ -453,8 +487,9 @@ def assemble_mosaic(
 				avg_color = np.mean(cell_data, axis=(0, 1))
 				grid[(row, col)] = tuple(int(c) for c in avg_color)
 
-	print(f"Grid: {grid_rows} rows x {grid_cols} cols = {len(grid)} cells")
-	print(f"Images to place: {num_images}")
+	if verbose:
+		print(f"Grid: {grid_rows} rows x {grid_cols} cols = {len(grid)} cells")
+		print(f"Images to place: {num_images}")
 
 	# Create canvas and occupancy grid
 	canvas = Image.new("RGBA", (canvas_width, canvas_height), (0, 0, 0, 0))
@@ -467,7 +502,8 @@ def assemble_mosaic(
 	occupancy_grid, occupancy_rows, occupancy_cols = create_occupancy_grid(
 		canvas_width, canvas_height, occupancy_cell_size
 	)
-	print(f"Occupancy grid: {occupancy_rows}x{occupancy_cols} cells of {occupancy_cell_size}px")
+	if verbose:
+		print(f"Occupancy grid: {occupancy_rows}x{occupancy_cols} cells of {occupancy_cell_size}px")
 
 	# Get spiral order for placement
 	spiral_cells = list(get_spiral_order_cells(grid_rows, grid_cols))
@@ -478,28 +514,30 @@ def assemble_mosaic(
 		spiral_cells, grid, tree, image_filenames, images_info,
 		IMAGE_FOLDER, scale_factor, cell_size, occupancy_grid,
 		occupancy_cell_size, canvas, canvas_width, canvas_height,
-		num_images, allow_duplicates
+		num_images, allow_duplicates, verbose, show_progress
 	)
 
 	placed_at_least_once = phase2_fill_remaining_gaps(
 		image_filenames, placed_at_least_once, images_info,
 		IMAGE_FOLDER, scale_factor, occupancy_grid, occupancy_cell_size,
-		canvas, canvas_width, canvas_height, placed_images
+		canvas, canvas_width, canvas_height, placed_images, verbose, show_progress
 	)
 
 	canvas, occupancy_grid, canvas_width, canvas_height, occupancy_rows, occupancy_cols, placed_at_least_once = phase3_expand_and_place(
 		image_filenames, placed_at_least_once, images_info,
 		IMAGE_FOLDER, scale_factor, occupancy_grid, occupancy_cell_size,
 		canvas, canvas_width, canvas_height, placed_images,
-		aspect_ratio, occupancy_rows, occupancy_cols
+		aspect_ratio, occupancy_rows, occupancy_cols, verbose, show_progress
 	)
 
 	# Print summary
-	print_final_summary(placed_images, placed_at_least_once, num_images, allow_duplicates)
+	if verbose:
+		print_final_summary(placed_images, placed_at_least_once, num_images, allow_duplicates)
 
 	# Apply target image overlay if requested
 	if overlay_opacity > 0:
-		print(f"\nApplying target image overlay (opacity: {overlay_opacity * 100:.0f}%)...")
+		if verbose:
+			print(f"\nApplying target image overlay (opacity: {overlay_opacity * 100:.0f}%)...")
 
 		# Resize target image to match final canvas size
 		target_overlay = target_img.resize((canvas.size[0], canvas.size[1]), Image.Resampling.LANCZOS)
@@ -520,11 +558,45 @@ def assemble_mosaic(
 		final_canvas = Image.alpha_composite(final_canvas, overlay_with_alpha)
 		canvas = final_canvas
 
-		print("[OK] Overlay applied successfully!")
+		if verbose:
+			print("[OK] Overlay applied successfully!")
+
+	# Calculate estimated file size and downscale if needed
+	width, height = canvas.size
+	estimated_size_mb = (width * height * 4) / (1024 * 1024)  # RGBA = 4 bytes per pixel
+	max_size_mb = 500  # Target maximum file size
+
+	if estimated_size_mb > max_size_mb:
+		if verbose:
+			print(f"\nEstimated file size ({estimated_size_mb:.0f}MB) exceeds {max_size_mb}MB limit")
+			print("Downscaling to reduce file size...")
+
+		# Calculate scale factor to get under 500MB
+		scale_ratio = (max_size_mb / estimated_size_mb) ** 0.5
+		new_width = int(width * scale_ratio)
+		new_height = int(height * scale_ratio)
+
+		canvas = canvas.resize((new_width, new_height), Image.Resampling.LANCZOS)
+		new_estimated_size = (new_width * new_height * 4) / (1024 * 1024)
+
+		if verbose:
+			print(f"  Resized from {width}x{height} to {new_width}x{new_height}")
+			print(f"  New estimated size: {new_estimated_size:.0f}MB")
 
 	# Save result
-	print(f"\nSaving mosaic to {output_file}...")
+	if verbose:
+		print(f"\nSaving mosaic to {output_file}...")
+
+	# Create output directory if it doesn't exist
+	output_dir = os.path.dirname(output_file)
+	if output_dir and not os.path.exists(output_dir):
+		os.makedirs(output_dir)
+
 	canvas.save(output_file)
-	print("[OK] Mosaic saved successfully!")
+
+	# Get actual file size
+	actual_size_mb = os.path.getsize(output_file) / (1024 * 1024)
+	if verbose:
+		print(f"[OK] Mosaic saved successfully! (Actual size: {actual_size_mb:.1f}MB)")
 
 	return canvas
