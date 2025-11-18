@@ -21,12 +21,19 @@ from scripts.canvas_utils import create_occupancy_grid, mark_occupied, expand_ca
 from scripts.placement import (
 	get_spiral_order_cells,
 	find_placement_position_fast,
-	find_position_near_target
+	find_position_near_target,
 )
 from scripts.target_analyzer import analyze_target_image, calculate_optimal_cell_size
 
 
-def calculate_canvas_dimensions(images_info, aspect_ratio, scale_factor, tight_packing, max_canvas_size, verbose=True):
+def calculate_canvas_dimensions(
+	images_info,
+	aspect_ratio,
+	scale_factor,
+	tight_packing,
+	max_canvas_size,
+	verbose=True,
+):
 	"""Calculate optimal canvas dimensions to fit all images."""
 	total_area = sum(info["area"] for info in images_info.values())
 	if verbose:
@@ -72,10 +79,23 @@ def place_image_on_canvas(canvas, img, position):
 
 
 def phase1_color_matched_placement(
-	spiral_cells, grid, tree, image_filenames, images_info,
-	IMAGE_FOLDER, scale_factor, cell_size, occupancy_grid,
-	occupancy_cell_size, canvas, canvas_width, canvas_height,
-	num_images, allow_duplicates, verbose=True, show_progress=True
+	spiral_cells,
+	grid,
+	tree,
+	image_filenames,
+	images_info,
+	IMAGE_FOLDER,
+	scale_factor,
+	cell_size,
+	occupancy_grid,
+	occupancy_cell_size,
+	canvas,
+	canvas_width,
+	canvas_height,
+	num_images,
+	allow_duplicates,
+	verbose=True,
+	show_progress=True,
 ):
 	"""
 	Phase 1: Place images with color matching in spiral order from center.
@@ -92,7 +112,9 @@ def phase1_color_matched_placement(
 	grid_rows = max(r for r, c in grid.keys()) + 1 if grid else 0
 	grid_cols = max(c for r, c in grid.keys()) + 1 if grid else 0
 
-	for row, col in tqdm(spiral_cells, desc="Color matching", disable=not show_progress):
+	for row, col in tqdm(
+		spiral_cells, desc="Color matching", disable=not show_progress
+	):
 		# Stop only if duplicates disabled and all images used
 		if not allow_duplicates and len(used_images) >= num_images:
 			break
@@ -105,13 +127,19 @@ def phase1_color_matched_placement(
 		if allow_duplicates:
 			if len(placed_at_least_once) < num_images:
 				# Prioritize unused images
-				best_match = find_best_match(target_color, tree, image_filenames, placed_at_least_once, k=50)
+				best_match = find_best_match(
+					target_color, tree, image_filenames, placed_at_least_once, k=50
+				)
 			else:
 				# All images placed once, allow any best match
-				best_match = find_best_match(target_color, tree, image_filenames, set(), k=50)
+				best_match = find_best_match(
+					target_color, tree, image_filenames, set(), k=50
+				)
 		else:
 			# No duplicates - only use each image once
-			best_match = find_best_match(target_color, tree, image_filenames, used_images, k=50)
+			best_match = find_best_match(
+				target_color, tree, image_filenames, used_images, k=50
+			)
 
 		if best_match is None:
 			continue
@@ -129,10 +157,16 @@ def phase1_color_matched_placement(
 		target_y = row * cell_size
 
 		position = find_position_near_target(
-			target_x, target_y, img_width, img_height,
-			occupancy_grid, occupancy_cell_size,
-			canvas_width, canvas_height, cell_size,
-			max(grid_rows, grid_cols)
+			target_x,
+			target_y,
+			img_width,
+			img_height,
+			occupancy_grid,
+			occupancy_cell_size,
+			canvas_width,
+			canvas_height,
+			cell_size,
+			max(grid_rows, grid_cols),
 		)
 
 		if position is None:
@@ -140,7 +174,14 @@ def phase1_color_matched_placement(
 
 		# Place image
 		place_image_on_canvas(canvas, img, position)
-		mark_occupied(occupancy_grid, position[0], position[1], img_width, img_height, occupancy_cell_size)
+		mark_occupied(
+			occupancy_grid,
+			position[0],
+			position[1],
+			img_width,
+			img_height,
+			occupancy_cell_size,
+		)
 
 		# Track usage
 		if not allow_duplicates:
@@ -156,9 +197,19 @@ def phase1_color_matched_placement(
 
 
 def phase2_fill_remaining_gaps(
-	image_filenames, placed_at_least_once, images_info,
-	IMAGE_FOLDER, scale_factor, occupancy_grid, occupancy_cell_size,
-	canvas, canvas_width, canvas_height, placed_images, verbose=True, show_progress=True
+	image_filenames,
+	placed_at_least_once,
+	images_info,
+	IMAGE_FOLDER,
+	scale_factor,
+	occupancy_grid,
+	occupancy_cell_size,
+	canvas,
+	canvas_width,
+	canvas_height,
+	placed_images,
+	verbose=True,
+	show_progress=True,
 ):
 	"""
 	Phase 2: Place remaining images in any available space.
@@ -174,16 +225,18 @@ def phase2_fill_remaining_gaps(
 		return placed_at_least_once
 
 	if verbose:
-		print(f"\nPhase 2: Placing {len(remaining_images)} remaining images in available space...")
+		print(
+			f"\nPhase 2: Placing {len(remaining_images)} remaining images in available space..."
+		)
 
 	# Sort by size (largest first for better packing)
 	remaining_sorted = sorted(
-		remaining_images,
-		key=lambda fn: images_info[fn]["area"],
-		reverse=True
+		remaining_images, key=lambda fn: images_info[fn]["area"], reverse=True
 	)
 
-	for filename in tqdm(remaining_sorted, desc="Filling gaps", disable=not show_progress):
+	for filename in tqdm(
+		remaining_sorted, desc="Filling gaps", disable=not show_progress
+	):
 		img_path = os.path.join(IMAGE_FOLDER, filename)
 		img = load_and_scale_image(img_path, scale_factor)
 		if img is None:
@@ -192,15 +245,26 @@ def phase2_fill_remaining_gaps(
 		img_width, img_height = img.size
 
 		position = find_placement_position_fast(
-			img_width, img_height, occupancy_grid, occupancy_cell_size,
-			canvas_width, canvas_height
+			img_width,
+			img_height,
+			occupancy_grid,
+			occupancy_cell_size,
+			canvas_width,
+			canvas_height,
 		)
 
 		if position is None:
 			continue
 
 		place_image_on_canvas(canvas, img, position)
-		mark_occupied(occupancy_grid, position[0], position[1], img_width, img_height, occupancy_cell_size)
+		mark_occupied(
+			occupancy_grid,
+			position[0],
+			position[1],
+			img_width,
+			img_height,
+			occupancy_cell_size,
+		)
 
 		placed_at_least_once.add(filename)
 		placed_images.append(filename)
@@ -213,10 +277,22 @@ def phase2_fill_remaining_gaps(
 
 
 def phase3_expand_and_place(
-	image_filenames, placed_at_least_once, images_info,
-	IMAGE_FOLDER, scale_factor, occupancy_grid, occupancy_cell_size,
-	canvas, canvas_width, canvas_height, placed_images,
-	aspect_ratio, occupancy_rows, occupancy_cols, verbose=True, show_progress=True
+	image_filenames,
+	placed_at_least_once,
+	images_info,
+	IMAGE_FOLDER,
+	scale_factor,
+	occupancy_grid,
+	occupancy_cell_size,
+	canvas,
+	canvas_width,
+	canvas_height,
+	placed_images,
+	aspect_ratio,
+	occupancy_rows,
+	occupancy_cols,
+	verbose=True,
+	show_progress=True,
 ):
 	"""
 	Phase 3: Expand canvas and place any remaining images.
@@ -227,13 +303,25 @@ def phase3_expand_and_place(
 	still_remaining = [fn for fn in image_filenames if fn not in placed_at_least_once]
 
 	if not still_remaining:
-		return canvas, occupancy_grid, canvas_width, canvas_height, occupancy_rows, occupancy_cols, placed_at_least_once
+		return (
+			canvas,
+			occupancy_grid,
+			canvas_width,
+			canvas_height,
+			occupancy_rows,
+			occupancy_cols,
+			placed_at_least_once,
+		)
 
 	if verbose:
-		print(f"\nPhase 3: Expanding canvas for {len(still_remaining)} remaining images...")
+		print(
+			f"\nPhase 3: Expanding canvas for {len(still_remaining)} remaining images..."
+		)
 
 	# Calculate expansion needed
-	remaining_area = sum(images_info[fn]["area"] * (scale_factor ** 2) for fn in still_remaining)
+	remaining_area = sum(
+		images_info[fn]["area"] * (scale_factor**2) for fn in still_remaining
+	)
 	expansion_area = remaining_area * 1.3  # 30% buffer
 
 	# Calculate balanced expansion
@@ -245,7 +333,14 @@ def phase3_expand_and_place(
 	expansion_height = int(expansion_height * 0.5)
 
 	# Expand canvas
-	canvas, occupancy_grid, canvas_width, canvas_height, occupancy_rows, occupancy_cols = expand_canvas(
+	(
+		canvas,
+		occupancy_grid,
+		canvas_width,
+		canvas_height,
+		occupancy_rows,
+		occupancy_cols,
+	) = expand_canvas(
 		canvas, occupancy_grid, occupancy_cell_size, expansion_width, expansion_height
 	)
 
@@ -254,7 +349,9 @@ def phase3_expand_and_place(
 		print(f"  Added {expansion_width}px width and {expansion_height}px height")
 
 	# Place remaining images
-	for filename in tqdm(still_remaining, desc="Placing in expanded area", disable=not show_progress):
+	for filename in tqdm(
+		still_remaining, desc="Placing in expanded area", disable=not show_progress
+	):
 		img_path = os.path.join(IMAGE_FOLDER, filename)
 		img = load_and_scale_image(img_path, scale_factor)
 		if img is None:
@@ -263,8 +360,12 @@ def phase3_expand_and_place(
 		img_width, img_height = img.size
 
 		position = find_placement_position_fast(
-			img_width, img_height, occupancy_grid, occupancy_cell_size,
-			canvas_width, canvas_height
+			img_width,
+			img_height,
+			occupancy_grid,
+			occupancy_cell_size,
+			canvas_width,
+			canvas_height,
 		)
 
 		# Try scaling down if no position found
@@ -273,11 +374,17 @@ def phase3_expand_and_place(
 			while attempt_scale > 0.2 and position is None:
 				scaled_width = max(1, int(img_width * attempt_scale))
 				scaled_height = max(1, int(img_height * attempt_scale))
-				temp_img = img.resize((scaled_width, scaled_height), Image.Resampling.LANCZOS)
+				temp_img = img.resize(
+					(scaled_width, scaled_height), Image.Resampling.LANCZOS
+				)
 
 				position = find_placement_position_fast(
-					scaled_width, scaled_height, occupancy_grid, occupancy_cell_size,
-					canvas_width, canvas_height
+					scaled_width,
+					scaled_height,
+					occupancy_grid,
+					occupancy_cell_size,
+					canvas_width,
+					canvas_height,
 				)
 
 				if position:
@@ -293,7 +400,14 @@ def phase3_expand_and_place(
 				continue
 
 		place_image_on_canvas(canvas, img, position)
-		mark_occupied(occupancy_grid, position[0], position[1], img_width, img_height, occupancy_cell_size)
+		mark_occupied(
+			occupancy_grid,
+			position[0],
+			position[1],
+			img_width,
+			img_height,
+			occupancy_cell_size,
+		)
 
 		placed_at_least_once.add(filename)
 		placed_images.append(filename)
@@ -302,27 +416,43 @@ def phase3_expand_and_place(
 		print(f"Phase 3 complete: {len(placed_images)} total images placed")
 		print(f"  Unique images used: {len(placed_at_least_once)}")
 
-	return canvas, occupancy_grid, canvas_width, canvas_height, occupancy_rows, occupancy_cols, placed_at_least_once
+	return (
+		canvas,
+		occupancy_grid,
+		canvas_width,
+		canvas_height,
+		occupancy_rows,
+		occupancy_cols,
+		placed_at_least_once,
+	)
 
 
-def print_final_summary(placed_images, placed_at_least_once, num_images, allow_duplicates):
+def print_final_summary(
+	placed_images, placed_at_least_once, num_images, allow_duplicates
+):
 	"""Print final statistics about the mosaic."""
 	print(f"\n=== FINAL SUMMARY ===")
 	print(f"Total images placed: {len(placed_images)}")
-	print(f"Unique images used: {len(placed_at_least_once)} out of {num_images} available")
+	print(
+		f"Unique images used: {len(placed_at_least_once)} out of {num_images} available"
+	)
 
 	if allow_duplicates:
 		print(f"Duplicates allowed: Yes (images reused to fill grid)")
 		duplicate_count = len(placed_images) - len(placed_at_least_once)
 		print(f"  Images reused: {duplicate_count} times")
 
-	unique_usage_percentage = (len(placed_at_least_once) / num_images * 100) if num_images > 0 else 0
+	unique_usage_percentage = (
+		(len(placed_at_least_once) / num_images * 100) if num_images > 0 else 0
+	)
 	print(f"Unique image usage: {unique_usage_percentage:.1f}%")
 
 	if len(placed_at_least_once) < num_images:
 		unused_count = num_images - len(placed_at_least_once)
 		print(f"\nWarning: {unused_count} unique images could not be placed")
-		print("This usually indicates corrupted image files or extreme size constraints")
+		print(
+			"This usually indicates corrupted image files or extreme size constraints"
+		)
 
 
 def assemble_mosaic(
@@ -371,7 +501,11 @@ def assemble_mosaic(
 	if verbose:
 		print("\n=== MOSAIC ASSEMBLY ===")
 		print(f"Target image: {TARGET_FILENAME}")
-		print(f"Max canvas size: {max_canvas_size:,} px per dimension" if max_canvas_size else "Max canvas size: Unlimited")
+		print(
+			f"Max canvas size: {max_canvas_size:,} px per dimension"
+			if max_canvas_size
+			else "Max canvas size: Unlimited"
+		)
 
 	# Load and filter images
 	if verbose:
@@ -439,10 +573,17 @@ def assemble_mosaic(
 				print(f"  Using user-specified scale factor: {scale_factor * 100:.0f}%")
 
 		canvas_width, canvas_height = calculate_canvas_dimensions(
-			images_info, aspect_ratio, scale_factor, tight_packing, max_canvas_size, verbose
+			images_info,
+			aspect_ratio,
+			scale_factor,
+			tight_packing,
+			max_canvas_size,
+			verbose,
 		)
 		if verbose:
-			print(f"Final canvas size: {canvas_width}x{canvas_height} ({canvas_width * canvas_height:,} px²)")
+			print(
+				f"Final canvas size: {canvas_width}x{canvas_height} ({canvas_width * canvas_height:,} px²)"
+			)
 	else:
 		canvas_width = target_width_orig * 2
 		canvas_height = target_height_orig * 2
@@ -471,7 +612,9 @@ def assemble_mosaic(
 	grid_rows = canvas_height // cell_size
 	grid_cols = canvas_width // cell_size
 
-	target_img_resized = target_img.resize((canvas_width, canvas_height), Image.Resampling.LANCZOS)
+	target_img_resized = target_img.resize(
+		(canvas_width, canvas_height), Image.Resampling.LANCZOS
+	)
 	np_img = np.array(target_img_resized.convert("RGB"))
 
 	grid = {}
@@ -503,7 +646,9 @@ def assemble_mosaic(
 		canvas_width, canvas_height, occupancy_cell_size
 	)
 	if verbose:
-		print(f"Occupancy grid: {occupancy_rows}x{occupancy_cols} cells of {occupancy_cell_size}px")
+		print(
+			f"Occupancy grid: {occupancy_rows}x{occupancy_cols} cells of {occupancy_cell_size}px"
+		)
 
 	# Get spiral order for placement
 	spiral_cells = list(get_spiral_order_cells(grid_rows, grid_cols))
@@ -511,36 +656,85 @@ def assemble_mosaic(
 
 	# Execute three-phase placement
 	placed_at_least_once, placed_images = phase1_color_matched_placement(
-		spiral_cells, grid, tree, image_filenames, images_info,
-		IMAGE_FOLDER, scale_factor, cell_size, occupancy_grid,
-		occupancy_cell_size, canvas, canvas_width, canvas_height,
-		num_images, allow_duplicates, verbose, show_progress
+		spiral_cells,
+		grid,
+		tree,
+		image_filenames,
+		images_info,
+		IMAGE_FOLDER,
+		scale_factor,
+		cell_size,
+		occupancy_grid,
+		occupancy_cell_size,
+		canvas,
+		canvas_width,
+		canvas_height,
+		num_images,
+		allow_duplicates,
+		verbose,
+		show_progress,
 	)
 
 	placed_at_least_once = phase2_fill_remaining_gaps(
-		image_filenames, placed_at_least_once, images_info,
-		IMAGE_FOLDER, scale_factor, occupancy_grid, occupancy_cell_size,
-		canvas, canvas_width, canvas_height, placed_images, verbose, show_progress
+		image_filenames,
+		placed_at_least_once,
+		images_info,
+		IMAGE_FOLDER,
+		scale_factor,
+		occupancy_grid,
+		occupancy_cell_size,
+		canvas,
+		canvas_width,
+		canvas_height,
+		placed_images,
+		verbose,
+		show_progress,
 	)
 
-	canvas, occupancy_grid, canvas_width, canvas_height, occupancy_rows, occupancy_cols, placed_at_least_once = phase3_expand_and_place(
-		image_filenames, placed_at_least_once, images_info,
-		IMAGE_FOLDER, scale_factor, occupancy_grid, occupancy_cell_size,
-		canvas, canvas_width, canvas_height, placed_images,
-		aspect_ratio, occupancy_rows, occupancy_cols, verbose, show_progress
+	(
+		canvas,
+		occupancy_grid,
+		canvas_width,
+		canvas_height,
+		occupancy_rows,
+		occupancy_cols,
+		placed_at_least_once,
+	) = phase3_expand_and_place(
+		image_filenames,
+		placed_at_least_once,
+		images_info,
+		IMAGE_FOLDER,
+		scale_factor,
+		occupancy_grid,
+		occupancy_cell_size,
+		canvas,
+		canvas_width,
+		canvas_height,
+		placed_images,
+		aspect_ratio,
+		occupancy_rows,
+		occupancy_cols,
+		verbose,
+		show_progress,
 	)
 
 	# Print summary
 	if verbose:
-		print_final_summary(placed_images, placed_at_least_once, num_images, allow_duplicates)
+		print_final_summary(
+			placed_images, placed_at_least_once, num_images, allow_duplicates
+		)
 
 	# Apply target image overlay if requested
 	if overlay_opacity > 0:
 		if verbose:
-			print(f"\nApplying target image overlay (opacity: {overlay_opacity * 100:.0f}%)...")
+			print(
+				f"\nApplying target image overlay (opacity: {overlay_opacity * 100:.0f}%)..."
+			)
 
 		# Resize target image to match final canvas size
-		target_overlay = target_img.resize((canvas.size[0], canvas.size[1]), Image.Resampling.LANCZOS)
+		target_overlay = target_img.resize(
+			(canvas.size[0], canvas.size[1]), Image.Resampling.LANCZOS
+		)
 
 		# Convert to RGBA if needed
 		if target_overlay.mode != "RGBA":
@@ -568,7 +762,9 @@ def assemble_mosaic(
 
 	if estimated_size_mb > max_size_mb:
 		if verbose:
-			print(f"\nEstimated file size ({estimated_size_mb:.0f}MB) exceeds {max_size_mb}MB limit")
+			print(
+				f"\nEstimated file size ({estimated_size_mb:.0f}MB) exceeds {max_size_mb}MB limit"
+			)
 			print("Downscaling to reduce file size...")
 
 		# Calculate scale factor to get under 500MB

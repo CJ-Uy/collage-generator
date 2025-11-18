@@ -27,7 +27,9 @@ def filter_images_by_date(images_info, start_date=None, end_date=None):
 
 	# Check if dates are in wrong order
 	if start_date is not None and end_date is not None and start_date > end_date:
-		print(f"\nWARNING: START_DATE ({start_date.strftime('%Y-%m-%d')}) is AFTER END_DATE ({end_date.strftime('%Y-%m-%d')})")
+		print(
+			f"\nWARNING: START_DATE ({start_date.strftime('%Y-%m-%d')}) is AFTER END_DATE ({end_date.strftime('%Y-%m-%d')})"
+		)
 		print("Automatically swapping dates to correct the range...")
 		start_date, end_date = end_date, start_date
 

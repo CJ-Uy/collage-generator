@@ -31,9 +31,9 @@ def get_file_date(file_path):
 
 				# Try different EXIF date fields in order of preference
 				date_fields = [
-					'DateTimeOriginal',  # When photo was taken (best)
-					'DateTime',          # General datetime
-					'DateTimeDigitized', # When photo was scanned/digitized
+					"DateTimeOriginal",  # When photo was taken (best)
+					"DateTime",  # General datetime
+					"DateTimeDigitized",  # When photo was scanned/digitized
 				]
 
 				for field in date_fields:

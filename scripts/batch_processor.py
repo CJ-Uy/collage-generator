@@ -19,7 +19,7 @@ def parse_date_from_filename(filename):
 	name_without_ext = os.path.splitext(filename)[0]
 
 	# Pattern: "YYYY-MM-DD to YYYY-MM-DD"
-	pattern = r'(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})'
+	pattern = r"(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})"
 	match = re.match(pattern, name_without_ext)
 
 	if match:
@@ -35,7 +35,7 @@ def process_targets_folder(
 	screenshots_folder="screenshots",
 	outputs_folder="outputs",
 	overlay_opacity=0.3,
-	verbose=False
+	verbose=False,
 ):
 	"""
 	Process all target images in the targets folder.
@@ -64,10 +64,9 @@ def process_targets_folder(
 			print(f"Created '{outputs_folder}' folder")
 
 	# Find all image files in targets folder
-	supported_formats = ('.jpg', '.jpeg', '.png')
+	supported_formats = (".jpg", ".jpeg", ".png")
 	target_files = [
-		f for f in os.listdir(targets_folder)
-		if f.lower().endswith(supported_formats)
+		f for f in os.listdir(targets_folder) if f.lower().endswith(supported_formats)
 	]
 
 	if not target_files:
@@ -86,7 +85,11 @@ def process_targets_folder(
 	skipped = 0
 
 	# Use tqdm to show overall progress when not verbose
-	target_files_iter = tqdm(target_files, desc="Overall progress", disable=verbose) if not verbose else target_files
+	target_files_iter = (
+		tqdm(target_files, desc="Overall progress", disable=verbose)
+		if not verbose
+		else target_files
+	)
 
 	for target_file in target_files_iter:
 		if verbose:
@@ -95,7 +98,7 @@ def process_targets_folder(
 			print("=" * 70)
 		else:
 			# Update the progress bar description with current file
-			if hasattr(target_files_iter, 'set_description'):
+			if hasattr(target_files_iter, "set_description"):
 				target_files_iter.set_description(f"Processing: {target_file[:40]}")
 
 		# Parse dates from filename

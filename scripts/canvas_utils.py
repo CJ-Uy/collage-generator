@@ -44,7 +44,9 @@ def mark_occupied(occupancy_grid, x, y, width, height, grid_size):
 	occupancy_grid[start_row:end_row, start_col:end_col] = 1
 
 
-def expand_canvas(canvas, occupancy_grid, occupancy_cell_size, expansion_width, expansion_height):
+def expand_canvas(
+	canvas, occupancy_grid, occupancy_cell_size, expansion_width, expansion_height
+):
 	"""
 	Expand canvas and occupancy grid in both dimensions.
 
@@ -70,9 +72,15 @@ def expand_canvas(canvas, occupancy_grid, occupancy_cell_size, expansion_width, 
 	new_canvas.paste(canvas, (0, 0))
 
 	# Expand occupancy grid in both dimensions
-	new_occupancy_cols = (new_canvas_width + occupancy_cell_size - 1) // occupancy_cell_size
-	new_occupancy_rows = (new_canvas_height + occupancy_cell_size - 1) // occupancy_cell_size
-	new_occupancy_grid = np.zeros((new_occupancy_rows, new_occupancy_cols), dtype=np.uint8)
+	new_occupancy_cols = (
+		new_canvas_width + occupancy_cell_size - 1
+	) // occupancy_cell_size
+	new_occupancy_rows = (
+		new_canvas_height + occupancy_cell_size - 1
+	) // occupancy_cell_size
+	new_occupancy_grid = np.zeros(
+		(new_occupancy_rows, new_occupancy_cols), dtype=np.uint8
+	)
 	new_occupancy_grid[:occupancy_rows, :occupancy_cols] = occupancy_grid
 
 	return (
@@ -81,5 +89,5 @@ def expand_canvas(canvas, occupancy_grid, occupancy_cell_size, expansion_width, 
 		new_canvas_width,
 		new_canvas_height,
 		new_occupancy_rows,
-		new_occupancy_cols
+		new_occupancy_cols,
 	)

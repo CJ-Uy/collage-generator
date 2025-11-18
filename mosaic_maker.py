@@ -50,7 +50,7 @@ if __name__ == "__main__":
 		start_date=START_DATE,
 		end_date=END_DATE,
 		overlay_opacity=OVERLAY_OPACITY,
-		# Advanced settings (automatically optimized):
+		# Advanced settings:
 		scale_factor=None,  # Auto-calculated
 		max_canvas_size=50000,  # Max dimension in pixels
 		use_all_images=True,  # Always use all images
